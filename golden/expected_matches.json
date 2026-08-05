@@ -1,0 +1,11 @@
+[
+  {
+    "document_id": "doc_sha256_placeholder",
+    "clause_id": "cl_example_001",
+    "clause_text": "投标人须在本市注册成立三年以上",
+    "expected_rules": [
+      {"rule_id": "DISC-001", "should_match": true},
+      {"rule_id": "QUAL-001", "should_match": false}
+    ]
+  }
+]
