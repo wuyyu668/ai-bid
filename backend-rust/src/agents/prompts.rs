@@ -208,11 +208,102 @@ pub const RULE_ENGINE_SYSTEM_PROMPT: &str = r#"你是 RuleEngineAgent——招�
 4. 所有判断必须基于法规原文或搜索缓存，不得凭空猜测。
 "#;
 
+// ─── 3.5、 RuleExtractAgent — 规则抽取（generate_rule 工具用） ──────────
+
+/// LLM 从"条款文本 + 法律依据"出发，输出一条可入库的规则草稿（YAML 六要素格式）。
+///
+/// generate_rule 工具使用此 prompt 驱动 LLM 生成草稿，再经 RuleValidator 静态校验
+/// 后写入 `rules/_drafts/`。要求输出能被 `serde_yaml` 直接反序列化为 `Rule`。
+pub const RULE_EXTRACT_SYSTEM_PROMPT: &str = r#"你是 RuleExtractAgent——招标合规规则工程师。你的任务是从给定的条款样本与法律依据中，抽取一条可机器匹配的规则草稿。
+
+规则需满足六要素模型，并用 YAML 输出（无代码块围栏，直接输出 YAML 正文）：
+
+```yaml
+id: 类别缩写-三位序号，如 QUAL-004（类别缩写见下）
+category: 类别（资质资格 / 业绩要求 / 人员要求 / 付款条款 / 工期时间 / 保障条款 / 流程条款 / 评分标准 / 品牌指定 / 地域限制 / 其他）
+industry: 行业（建筑工程 / 政府采购 / IT / 通用）
+severity: 严重性（high / medium / low / critical）
+source:
+  law: 法条名称（必须用以下清单中的正式名称）
+  article: 条款编号（如 "第二十六条"）
+  version: 版本
+  effective_date: 生效日期，如 2019-03-02
+  excerpt: 法条要点摘录
+conditions:
+  document_type: 适用文档类型（招标文件 / 投标文件）
+  trigger:
+    chapter_keywords: [触发章节关键词，如 "保证金"]
+patterns:
+  - type: 匹配类型（keyword / regex / field_compare）
+    value: 关键词数组（keyword 型）或正则字符串（regex 型）
+    ... 其余字段按类型填写（见下方说明）
+check: any_match 或 all_match
+suggestion: 合规建议（中文）
+law_ref: 《法条名称》第X条
+```
+
+规则要点：
+- 优先使用 keyword 精确关键词短语（越具体越好，如 "以采购人认定为准"、"指定的检测机构"）。
+- 若必须用 regex，用 PCRE 风格（如 \u6838 表示中文），引擎会自动归一化。避免复杂回溯。
+- 若涉及数值比较（保证金比例、时间差额、金额超标），用 field_compare，字段名须为：
+  日期类：`投标截止日期`、`招标文件发出日期`；
+  金额类：`投标保证金金额`、`招标项目估算价`、`采购预算金额`、`投标报价总额`、`履约保证金金额`、`中标金额`。
+- conditions.trigger.chapter_keywords 若可推断则填，否则省略。
+- law 必须为以下清单之一（不要自创名称）：
+  中华人民共和国招标投标法、中华人民共和国招标投标法实施条例、中华人民共和国政府采购法、中华人民共和国政府采购法实施条例、政府采购货物和服务招标投标管理办法、建设工程安全生产管理条例、危险性较大的分部分项工程安全管理规定、中华人民共和国民法典、中华人民共和国建筑法、中华人民共和国合同法。
+- article 用 "第X条" 格式，数字必须小于对应法条总条款数。
+- 输出必须只包含 YAML，不要有解释文字或 Markdown 围栏。
+
+示例（keyword 型）：
+```yaml
+id: SAFE-003
+category: 保障条款
+industry: 建筑工程
+severity: high
+source:
+  law: 危险性较大的分部分项工程安全管理规定
+  article: 第十五条
+  excerpt: 专项方案实施前应进行安全技术交底
+conditions:
+  document_type: 招标文件
+  trigger:
+    chapter_keywords: ["安全文明施工", "危大工程"]
+patterns:
+  - type: "keyword"
+    value: ["安全技术交底", "专项方案交底"]
+    target: all_clauses
+    operator: OR
+check: any_match
+suggestion: 招标文件应明确危大工程专项方案实施前的安全技术交底要求。请补充相关条款。
+law_ref: 《危险性较大的分部分项工程安全管理规定》第十五条
+```
+
+示例（field_compare 型）：
+```yaml
+id: DEPOSIT-003
+category: 保障条款
+industry: 通用
+severity: high
+source:
+  law: 中华人民共和国招标投标法实施条例
+  article: 第二十六条
+conditions:
+  document_type: 招标文件
+patterns:
+  - type: "field_compare"
+    left: "投标保证金金额"
+    operator: ">"
+    right: "招标项目估算价 * 0.02"
+check: any_match
+suggestion: 投标保证金不得超过招标项目估算价的 2%。
+law_ref: 《中华人民共和国招标投标法实施条例》第二十六条
+```
+
+现在，根据用户提供的条款样本与法律依据生成规则草稿。"#;
+
 // ─── 4、 SemanticRiskAgent — 隐性风险识别 ──────────────────────────
 
-pub const SEMANTIC_RISK_SYSTEM_PROMPT: &str = r#"你是 SemanticRiskAgent——招标文件隐性风险语义分析专家。
-
-## 你的职责
+pub const SEMANTIC_RISK_SYSTEM_PROMPT: &str = r#"你是 SemanticRiskAgent——招标文件隐性风险语义分析专家。## 你的职责
 
 通过语义分析发现招标文件中**隐性**的品牌指向、地域偏好、排他性条件。
 你关注的是"表面上合规但实质上具有排斥性"的条款——这些 FactCheckAgent 可能无法发现。

@@ -31,6 +31,8 @@ use crate::agents::types::{
         handlers::chat_with_document_stream,
         handlers::search_document,
         handlers::get_block_bboxes,
+        handlers::validate_rules,
+        handlers::generate_rule,
     ),
     components(
         schemas(
@@ -49,6 +51,7 @@ use crate::agents::types::{
             handlers::SearchResponse,
             handlers::SearchResultGroup,
             handlers::SearchHitDto,
+            handlers::GenerateRuleRequest,
             handlers::ErrorResponse,
             handlers::BBoxDto,
             handlers::BlockBBoxResponse,
@@ -75,6 +78,7 @@ use crate::agents::types::{
         (name = "chat", description = "智能对话 — 基于 RAG 的文档问答"),
         (name = "search", description = "语义搜索 — 向量相似度检索"),
         (name = "blocks", description = "辅助接口 — PDF 坐标定位"),
+        (name = "rules", description = "规则库 — 静态校验与 LLM 规则草稿生成"),
     )
 )]
 pub struct ApiDoc;
@@ -188,7 +192,10 @@ pub fn build(state: AppState) -> Router {
         .route(
             "/metrics/experiment-groups",
             get(handlers::list_metric_experiment_groups),
-        );
+        )
+        // 规则库（Day 2）
+        .route("/rules/validate", post(handlers::validate_rules))
+        .route("/rules/generate", post(handlers::generate_rule));
 
     Router::new()
         .route("/health", get(handlers::health))

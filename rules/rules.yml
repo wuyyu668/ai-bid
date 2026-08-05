@@ -1,0 +1,696 @@
+# 规则匹配模块规则库（Day 1 骨架）
+#
+# git 管理的核心资产。每条规则六要素完整（id/category/industry/severity/source/conditions + patterns/check/suggestion/law_ref，source 追溯法条。
+#
+# Day 1：落骨架（10 条，覆盖 DISC/QUAL/PRIC/TIME/SAFE/PROC 类别，含 regex / keyword / field_compare 三类 pattern）。Day 2 由 LLM 辅助 + 人工确认扩展到 25-30 条。
+#
+# 维护约定：每条规则必须配套"应该匹配 / 不该匹配"正负例用例（见 docs/rule-engine-test-plan.md与测试集 rules_expected.json），并随规则进回归测试集。
+
+rules:
+  # ────────────────────────────────────────────────────────────
+  # 排斥性条款 / DISC
+  # ────────────────────────────────────────────────────────────
+  - id: "DISC-001"
+    category: "排斥性条款"
+    industry: "建筑工程"
+    severity: "critical"
+    source:
+      law: "中华人民共和国招标投标法"
+      article: "第十八条"
+      version: "2017年修正版"
+      effective_date: "2017-12-28"
+      excerpt: "招标人不得以不合理的条件限制或者排斥潜在投标人，不得对潜在投标人实行歧视待遇。"
+    conditions:
+      document_type: "招标文件"
+      project_types: ["施工招标", "工程总承包"]
+      trigger:
+        chapter_keywords: ["投标人资格", "投标人须知", "资格要求"]
+      exclude:
+        project_types: ["国际招标"]
+    patterns:
+      - type: "regex"
+        value: "(投标人|潜在投标人).*(注册地|设立.{0,4}机构|注册成立).*(本市|本省|本地|辖区|当地)"
+        target: "all_clauses"
+        description: "匹配以注册地/设立机构为条件的地域限制"
+      - type: "keyword"
+        value: ["差别待遇", "歧视待遇", "仅限本地", "限本市企业"]
+        target: "all_clauses"
+        operator: "OR"
+    check: "any_match"
+    suggestion: "该条款以注册地/地域作为投标资格条件，涉嫌违反《招标投标法》第十八条。建议删除地域性要求，或改为'中标后应在项目所在地设立项目机构'。"
+    law_ref: "《中华人民共和国招标投标法》第十八条"
+
+  - id: "BRAND-001"
+    category: "排斥性条款"
+    industry: "政府采购"
+    severity: "critical"
+    source:
+      law: "中华人民共和国政府采购法"
+      article: "第二十二条"
+      version: "2014年修正版"
+      effective_date: "2015-01-01"
+      excerpt: "采购人不得以不合理的条件对供应商实行差别待遇或者歧视待遇。"
+    conditions:
+      document_type: "招标文件"
+      project_types: ["货物采购"]
+      trigger:
+        chapter_keywords: ["技术参数", "技术规格", "采购需求"]
+      exclude:
+        clause_keywords: ["或相当于", "或同等档次", "仅供参考"]
+    patterns:
+      - type: "regex"
+        value: "(指定|须为|必须采用|限定).{0,6}(品牌|型号|厂商|供应商)[:：]?\\s*[A-Za-z\\u4e00-\\u9fa5]+"
+        target: "all_clauses"
+        description: "匹配以特定品牌/型号/厂商为强制要求的表述"
+    check: "any_match"
+    suggestion: "采购需求指定特定品牌/供应商，涉嫌违反《政府采购法》第二十二条差别待遇禁止。建议改为功能性能参数描述，或标注'参考品牌，允许提供同等及以上产品'。"
+    law_ref: "《中华人民共和国政府采购法》第二十二条"
+
+  - id: "CAPITAL-001"
+    category: "排斥性条款"
+    industry: "建筑工程"
+    severity: "high"
+    source:
+      law: "中华人民共和国招标投标法实施条例"
+      article: "第三十二条"
+      version: "2019年修订版"
+      effective_date: "2019-03-02"
+      excerpt: "招标人不得以不合理的条件限制、排斥潜在投标人或者投标人，如设定与合同履行无关的资格、技术、商务条件。"
+    conditions:
+      document_type: "招标文件"
+      project_types: ["施工招标"]
+      trigger:
+        chapter_keywords: ["投标人资格", "资格要求"]
+    patterns:
+      - type: "regex"
+        value: "注册资本(金)?(不低于|不少于|≥|大于).{0,6}([1-9]\\d*)(亿|千万)"
+        target: "all_clauses"
+        description: "匹配畸高的注册资本门槛（亿/千万级）"
+    check: "any_match"
+    suggestion: "以畸高注册资本作为资格条件，可能构成与合同履行无关的排斥性条件，违反《招标投标法实施条例》第三十二条。建议核实门槛与项目规模的匹配性并适度下调。"
+    law_ref: "《中华人民共和国招标投标法实施条例》第三十二条"
+
+  - id: "PERF-001"
+    category: "排斥性条款"
+    industry: "建筑工程"
+    severity: "high"
+    source:
+      law: "中华人民共和国招标投标法实施条例"
+      article: "第三十二条"
+      version: "2019年修订版"
+      effective_date: "2019-03-02"
+      excerpt: "招标人不得以特定行政区域或者特定行业的业绩、奖项作为加分条件或者中标条件。"
+    conditions:
+      document_type: "招标文件"
+      project_types: ["施工招标"]
+      trigger:
+        chapter_keywords: ["业绩要求", "类似业绩", "评分办法"]
+    patterns:
+      - type: "regex"
+        value: "(本市|本省|本地区|本区域|当地).{0,4}(类似|同类)?业绩.{0,6}(不少于|不低于|≥|至少)?\\s*\\d+"
+        target: "all_clauses"
+        description: "匹配以特定行政区域业绩为资格/加分条件的表述"
+    check: "any_match"
+    suggestion: "以特定行政区域业绩作为资格或加分条件，违反《招标投标法实施条例》第三十二条。建议删除地域限定，改为不限区域的同类项目业绩。"
+    law_ref: "《中华人民共和国招标投标法实施条例》第三十二条"
+
+  # ────────────────────────────────────────────────────────────
+  # 程序时限 / TIME
+  # ────────────────────────────────────────────────────────────
+  - id: "TIME-001"
+    category: "程序时限"
+    industry: "通用"
+    severity: "critical"
+    source:
+      law: "中华人民共和国招标投标法"
+      article: "第二十四条"
+      version: "2017年修正版"
+      effective_date: "2017-12-28"
+      excerpt: "依法必须进行招标的项目，自招标文件开始发出之日起至投标人提交投标文件截止之日止，最短不得少于二十日。"
+    conditions:
+      document_type: "招标文件"
+      project_types: ["公开招标", "邀请招标"]
+      trigger:
+        chapter_keywords: ["投标截止", "开标时间", "投标须知前附表"]
+    patterns:
+      - type: "field_compare"
+        left: "投标截止日期 - 招标文件发出日期"
+        operator: "<"
+        right: 20
+        unit: "天"
+        target: "front_table"
+        description: "两个日期字段之差与法定最短期限 20 日比较"
+    check: "any_match"
+    suggestion: "投标准备期不足法定最短 20 日，违反《招标投标法》第二十四条。建议将投标截止日顺延至满足 ≥20 日。"
+    law_ref: "《中华人民共和国招标投标法》第二十四条"
+
+  # ────────────────────────────────────────────────────────────
+  # 保证金 / PRIC
+  # ────────────────────────────────────────────────────────────
+  - id: "DEPOSIT-001"
+    category: "保证金"
+    industry: "通用"
+    severity: "high"
+    source:
+      law: "中华人民共和国招标投标法实施条例"
+      article: "第二十六条"
+      version: "2019年修订版"
+      effective_date: "2019-03-02"
+      excerpt: "招标人在招标文件中要求投标人提交投标保证金的，投标保证金不得超过招标项目估算价的百分之二。"
+    conditions:
+      document_type: "招标文件"
+      trigger:
+        chapter_keywords: ["投标保证金", "保证金"]
+    patterns:
+      - type: "field_compare"
+        left: "投标保证金金额"
+        operator: ">"
+        right: "招标项目估算价 * 0.02"
+        target: "front_table"
+        description: "保证金金额与估算价 2% 比较"
+    check: "any_match"
+    suggestion: "投标保证金超过招标项目估算价的 2%，违反《招标投标法实施条例》第二十六条。建议下调至估算价 2% 以内。"
+    law_ref: "《中华人民共和国招标投标法实施条例》第二十六条"
+
+  - id: "BUDGET-001"
+    category: "报价合规"
+    industry: "政府采购"
+    severity: "critical"
+    source:
+      law: "政府采购货物和服务招标投标管理办法"
+      article: "第五十一条"
+      version: "财政部令第87号"
+      effective_date: "2017-10-01"
+      excerpt: "投标人的报价超过采购预算或者最高限价的，其投标无效。"
+    conditions:
+      document_type: "投标文件"
+      project_types: ["货物采购", "服务采购"]
+      trigger:
+        chapter_keywords: ["投标报价", "开标一览表", "报价明细"]
+    patterns:
+      - type: "field_compare"
+        left: "投标报价总额"
+        operator: ">"
+        right: "采购预算金额"
+        target: "bid_summary"
+        description: "投标报价与采购预算/最高限价比较"
+    check: "any_match"
+    suggestion: "投标报价超过采购预算或最高限价，依《政府采购货物和服务招标投标管理办法》第五十一条应作无效投标处理。"
+    law_ref: "《政府采购货物和服务招标投标管理办法》第五十一条"
+
+  # ────────────────────────────────────────────────────────────
+  # 资质完整性 / QUAL / SAFE
+  # ────────────────────────────────────────────────────────────
+  - id: "CERT-001"
+    category: "资质完整性"
+    industry: "建筑工程"
+    severity: "high"
+    source:
+      law: "建设工程安全生产管理条例"
+      article: "第二十条"
+      version: "国务院令第393号"
+      effective_date: "2004-02-01"
+      excerpt: "施工单位从事建设工程的新建、扩建、改建和拆除等活动，应当具备国家规定的注册资本、专业技术人员、技术装备和安全生产等条件，依法取得相应等级的资质证书。"
+    conditions:
+      document_type: "投标文件"
+      project_types: ["施工招标"]
+      trigger:
+        chapter_keywords: ["资质证书", "企业资质", "证书清单"]
+    patterns:
+      - type: "keyword"
+        value: ["安全生产许可证"]
+        target: "cert_section"
+        operator: "OR"
+        match_mode: "absence"
+        description: "资质章节中缺少'安全生产许可证'即触发（缺失匹配）"
+    check: "any_match"
+    suggestion: "施工类投标文件未见'安全生产许可证'，不符合《建设工程安全生产管理条例》第二十条要求。请补充有效安全生产许可证。"
+    law_ref: "《建设工程安全生产管理条例》第二十条"
+
+  - id: "QUAL-001"
+    category: "表述规范"
+    industry: "建筑工程"
+    severity: "medium"
+    source:
+      law: "中华人民共和国招标投标法"
+      article: "第十九条"
+      version: "2017年修正版"
+      effective_date: "2017-12-28"
+      excerpt: "招标人应当根据招标项目的特点和需要编制招标文件，招标文件应当包括对投标人资格审查的标准。"
+    conditions:
+      document_type: "招标文件"
+      project_types: ["施工招标", "工程总承包"]
+      trigger:
+        chapter_keywords: ["资格要求", "资质要求"]
+    patterns:
+      - type: "keyword"
+        value: ["相应资质", "相应的资质", "具备相关资质", "同类资质"]
+        target: "qualification_section"
+        operator: "OR"
+        description: "匹配未明确等级的模糊资质表述"
+    check: "any_match"
+    suggestion: "资质要求仅表述为'相应/相关资质'，未明确等级，不利于资格审查标准的确定性（《招标投标法》第十九条）。建议明确要求的资质类别与最低等级。"
+    law_ref: "《中华人民共和国招标投标法》第十九条"
+
+  # ────────────────────────────────────────────────────────────
+  # 定标合规 / PROC
+  # ────────────────────────────────────────────────────────────
+  - id: "AWARD-001"
+    category: "定标合规"
+    industry: "通用"
+    severity: "critical"
+    source:
+      law: "中华人民共和国招标投标法"
+      article: "第四十五条"
+      version: "2017年修正版"
+      effective_date: "2017-12-28"
+      excerpt: "中标通知书对招标人和中标人具有法律效力。中标通知书发出后，招标人改变中标结果的，应当依法承担法律责任。"
+    conditions:
+      document_type: "招标文件"
+      trigger:
+        chapter_keywords: ["定标", "中标", "授标"]
+    patterns:
+      - type: "keyword"
+        value: ["中标通知书", "定标后", "中标结果"]
+        target: "award_section"
+        operator: "OR"
+        description: "先定位到定标/中标结果相关条款"
+      - type: "regex"
+        value: "(有权|可)(单方)?(变更|改变|调整|取消).{0,6}中标(结果|人)"
+        target: "award_section"
+        description: "匹配招标人保留擅自改变中标结果权利的表述"
+    check: "all_match"   # 两个模式同时命中才触发——避免仅出现"中标"字样即误报
+    suggestion: "条款保留招标人擅自改变中标结果的权利，违反《招标投标法》第四十五条。建议删除相关表述，中标结果变更须依法进行。"
+    law_ref: "《中华人民共和国招标投标法》第四十五条"
+
+  # ────────────────────────────────────────────────────────────
+  # Day 2 新增（LLM 辅助 + 人工确认）：DISC / QUAL / EXPR / TIME / SAFE / PROC / PRIC 补全
+  # ────────────────────────────────────────────────────────────
+  - id: "DISC-002"
+    category: "排斥性条款"
+    industry: "通用"
+    severity: "high"
+    source:
+      law: "中华人民共和国招标投标法实施条例"
+      article: "第三十二条"
+      version: "2019年修订版"
+      effective_date: "2019-03-02"
+      excerpt: "招标人不得以不合理的条件限制、排斥潜在投标人或者投标人，不得指定特定的供应商或服务提供者。"
+    conditions:
+      document_type: "招标文件"
+      trigger:
+        chapter_keywords: ["检测验收", "技术参数", "检验"]
+      exclude:
+        clause_keywords: ["或同等", "或等同于", "具备CMA"]
+    patterns:
+      - type: "regex"
+        value: "(指定|必须由|限定由).{0,8}(检测|检验|评审|认证|鉴定)(机构|单位|中心|所).{0,8}(进行|出具|完成)"
+        target: "all_clauses"
+        description: "匹配硬性指定特定检测/评审机构"
+    check: "any_match"
+    suggestion: "对检测/评审机构作绝对指定，可能构成对潜在投标人的限制（《招标投标法实施条例》第三十二条）。建议改为'具备相应资质的第三方机构'并允许同等资质替代。"
+    law_ref: "《中华人民共和国招标投标法实施条例》第三十二条"
+
+  - id: "DISC-003"
+    category: "排斥性条款"
+    industry: "通用"
+    severity: "high"
+    source:
+      law: "中华人民共和国招标投标法实施条例"
+      article: "第三十二条"
+      version: "2019年修订版"
+      effective_date: "2019-03-02"
+      excerpt: "招标人不得以特定行政区域或者特定行业的业绩、奖项作为加分条件或者中标条件。"
+    conditions:
+      document_type: "招标文件"
+      trigger:
+        chapter_keywords: ["资格要求", "投标人须知", "分支机构"]
+    patterns:
+      - type: "regex"
+        value: "(须|必须|应|应当).{0,8}(在本省|在本市|本地|辖区).{0,8}(设立|建有|设有).{0,6}\\d+\\s*个?以上?\\s*((分支|办公|售后|服务)机构)?"
+        target: "all_clauses"
+        description: "匹配以特定行政区域分支机构数量为资格条件"
+    check: "any_match"
+    suggestion: "以特定行政区域分支机构数量作为资格条件，构成地域限制（《招标投标法实施条例》第三十二条）。建议删除地域限定，改为不限布局的机构能力要求。"
+    law_ref: "《中华人民共和国招标投标法实施条例》第三十二条"
+
+  - id: "DISC-004"
+    category: "排斥性条款"
+    industry: "通用"
+    severity: "high"
+    source:
+      law: "中华人民共和国招标投标法实施条例"
+      article: "第三十二条"
+      version: "2019年修订版"
+      effective_date: "2019-03-02"
+      excerpt: "招标人不得以不合理的条件限制、排斥潜在投标人或者投标人。"
+    conditions:
+      document_type: "招标文件"
+      trigger:
+        chapter_keywords: ["项目经理", "项目负责人", "人员要求"]
+    patterns:
+      - type: "regex"
+        value: "(项目经理|项目负责人|主要人员).{0,10}(须|需|应|必须).{0,6}(本地|本市|本省).{0,6}(社保|缴纳|参保|户籍)"
+        target: "all_clauses"
+        description: "匹配以本地社保/户籍作为人员资格条件"
+    check: "any_match"
+    suggestion: "对关键人员要求本地社保或户籍，构成地域限制（《招标投标法实施条例》第三十二条）。建议删除地域关联，改为通用职业资格要求。"
+    law_ref: "《中华人民共和国招标投标法实施条例》第三十二条"
+
+  - id: "QUAL-002"
+    category: "资质完整性"
+    industry: "建筑工程"
+    severity: "high"
+    source:
+      law: "中华人民共和国招标投标法"
+      article: "第二十七条"
+      version: "2017年修正版"
+      effective_date: "2017-12-28"
+      excerpt: "投标人应当按照招标文件的要求编制投标文件，内容应当包括拟派出的项目负责人与主要技术人员的简历、业绩。"
+    conditions:
+      document_type: "投标文件"
+      project_types: ["施工招标"]
+      trigger:
+        chapter_keywords: ["投标文件组成", "人员配备", "项目管理机构"]
+    patterns:
+      - type: "keyword"
+        value: ["主要人员配置表", "主要管理人员一览表", "项目管理机构人员表"]
+        target: "qualification_section"
+        operator: "OR"
+        match_mode: "absence"
+        description: "投标文件缺少主要人员配备表（缺失匹配）"
+    check: "any_match"
+    suggestion: "投标文件未提供主要人员配备表，不符合《招标投标法》第二十七条关于拟派人员内容的要求。请补充项目组织机构及主要人员配置表。"
+    law_ref: "《中华人民共和国招标投标法》第二十七条"
+
+  - id: "QUAL-003"
+    category: "资质完整性"
+    industry: "通用"
+    severity: "medium"
+    source:
+      law: "中华人民共和国招标投标法实施条例"
+      article: "第三十二条"
+      version: "2019年修订版"
+      effective_date: "2019-03-02"
+      excerpt: "招标人不得以特定行政区域或者特定行业的业绩、奖项作为加分条件或者中标条件。"
+    conditions:
+      document_type: "招标文件"
+      trigger:
+        chapter_keywords: ["资格要求", "资质要求", "人员要求"]
+    patterns:
+      - type: "regex"
+        value: "(高级职称|中级职称|注册类人员).{0,6}(人数|人员).{0,6}(不少于|不低于|≥|至少)\\s*\\d+"
+        target: "all_clauses"
+        description: "匹配以绝对职称人数作为资格条件"
+    check: "any_match"
+    suggestion: "以绝对数量的高级职称人数作为资格条件，可能与项目实际需求不匹配（《招标投标法实施条例》第三十二条）。建议核实并改为与项目规模匹配的人员要求。"
+    law_ref: "《中华人民共和国招标投标法实施条例》第三十二条"
+
+  - id: "EXPR-001"
+    category: "表述规范"
+    industry: "通用"
+    severity: "medium"
+    source:
+      law: "中华人民共和国招标投标法实施条例"
+      article: "第三十条"
+      version: "2019年修订版"
+      effective_date: "2019-03-02"
+      excerpt: "招标文件应当载明投标有效期。"
+    conditions:
+      document_type: "招标文件"
+      trigger:
+        chapter_keywords: ["付款", "结算", "合同条款", "验收"]
+    patterns:
+      - type: "keyword"
+        value: ["以采购人认定为准", "以采购人最终认定为准", "以招标人认定为准", "以招标人最终认定为准", "以甲方验收为准", "验收后另行协商"]
+        target: "all_clauses"
+        operator: "OR"
+        description: "付款/验收条件未约定明确时间"
+    check: "any_match"
+    suggestion: "付款或验收条件表述含糊（以招标人认定为准/另行协商），未约定明确的时限与判定标准，易引发履约纠纷。建议明确付款节点、验收标准与异议处理时限。"
+    law_ref: "《中华人民共和国招标投标法实施条例》第三十条"
+
+  - id: "EXPR-002"
+    category: "表述规范"
+    industry: "通用"
+    severity: "medium"
+    source:
+      law: "中华人民共和国招标投标法实施条例"
+      article: "第三十条"
+      version: "2019年修订版"
+      effective_date: "2019-03-02"
+      excerpt: "招标文件应当载明投标有效期及对投标文件密封、签署等要求。"
+    conditions:
+      document_type: "招标文件"
+      trigger:
+        chapter_keywords: ["交货", "供货", "交付", "响应时间"]
+    patterns:
+      - type: "regex"
+        value: "(接到|接受|收到).{0,6}(通知|指示|指令).{0,4}(后|内)\\s*(尽快|立即|及时|适时)"
+        target: "all_clauses"
+        description: "响应/交付时限表述为尽快等无定截止"
+    check: "any_match"
+    suggestion: "交货/响应时限表述为'尽快/及时'等无明确截止的措辞，缺少可判定的时限标准。建议约定明确的日历日或工作日期限。"
+    law_ref: "《中华人民共和国招标投标法实施条例》第三十条"
+
+  - id: "TIME-002"
+    category: "程序时限"
+    industry: "通用"
+    severity: "high"
+    source:
+      law: "中华人民共和国招标投标法实施条例"
+      article: "第四十四条"
+      version: "2019年修订版"
+      effective_date: "2019-03-02"
+      excerpt: "招标人应当自收到异议之日起三日内作出答复；作出答复前，应当暂停招标投标活动。"
+    conditions:
+      document_type: "招标文件"
+      trigger:
+        chapter_keywords: ["质疑", "异议", "投诉"]
+    patterns:
+      - type: "regex"
+        value: "(质疑|异议|投诉).{0,10}(答复|处理|回复).{0,8}(期限|时限|时间为?)?\\s*(仅|为|只)\\s*[1-5]\\s*个?(工作)?(日|天)"
+        target: "all_clauses"
+        description: "质疑答复期限短于法定标准（第44条：异议答复 3 日、政府采购 7 工作日）"
+    check: "any_match"
+    suggestion: "质疑/异议答复期限过短，不符合法定答复时限要求。请按《招标投标法实施条例》规定的异议答复时限（自收到异议之日起三日内作出答复）执行。"
+    law_ref: "《中华人民共和国招标投标法实施条例》第四十四条"
+
+  - id: "TIME-003"
+    category: "程序时限"
+    industry: "通用"
+    severity: "high"
+    source:
+      law: "中华人民共和国招标投标法实施条例"
+      article: "第五十四条"
+      version: "2019年修订版"
+      effective_date: "2019-03-02"
+      excerpt: "依法必须进行招标的项目，招标人应当自收到评标报告之日起三日内公示中标候选人，公示期不得少于三日。"
+    conditions:
+      document_type: "招标文件"
+      trigger:
+        chapter_keywords: ["中标候选人", "公示", "定标"]
+    patterns:
+      - type: "regex"
+        value: "(中标候选人|中标结果).{0,8}(公示|公告).{0,8}(期限|期为?|时间)?\\s*(为|仅|只)\\s*[1-2]\\s*个?(工作)?(日|天)"
+        target: "all_clauses"
+        description: "中标候选人公示期短于法定 3 日"
+    check: "any_match"
+    suggestion: "中标候选人公示期短于法定 3 日下限（《招标投标法实施条例》第五十四条）。建议公示期不少于三个工作日。"
+    law_ref: "《中华人民共和国招标投标法实施条例》第五十四条"
+
+  - id: "SAFE-001"
+    category: "安全合规"
+    industry: "建筑工程"
+    severity: "high"
+    source:
+      law: "建设工程安全生产管理条例"
+      article: "第八条"
+      version: "国务院令第393号"
+      effective_date: "2004-02-01"
+      excerpt: "施工单位应当在施工现场显著位置设置安全警示标志，并按国家规定在建设工程中单列安全防护、文明施工措施费用。"
+    conditions:
+      document_type: "投标文件"
+      project_types: ["施工招标"]
+      trigger:
+        chapter_keywords: ["安全文明施工费", "措施费", "安全生产"]
+    patterns:
+      - type: "keyword"
+        value: ["安全文明施工费"]
+        target: "cert_section"
+        operator: "OR"
+        match_mode: "absence"
+        description: "投标报价/安全章节未单列安全文明施工费（缺失匹配）"
+    check: "any_match"
+    suggestion: "投标文件未单列安全文明施工费，不符合《建设工程安全生产管理条例》对安全防护措施费用的要求。建议在报价中单列该费用。"
+    law_ref: "《建设工程安全生产管理条例》第八条"
+
+  - id: "SAFE-002"
+    category: "安全合规"
+    industry: "建筑工程"
+    severity: "high"
+    source:
+      law: "危险性较大的分部分项工程安全管理规定"
+      article: "第十条"
+      version: "住建部令第37号"
+      effective_date: "2018-06-01"
+      excerpt: "施工单位应当在危险性较大的分部分项工程施工前组织编制专项施工方案。"
+    conditions:
+      document_type: "投标文件"
+      project_types: ["施工招标"]
+      trigger:
+        chapter_keywords: ["施工组织设计", "安全专项", "危大工程"]
+    patterns:
+      - type: "keyword"
+        value: ["危大工程", "危险性较大的分部分项", "专项施工方案"]
+        target: "all_clauses"
+        operator: "OR"
+        match_mode: "absence"
+        description: "投标文件缺少危大工程专项方案（缺失匹配）"
+    check: "any_match"
+    suggestion: "投标文件中未提及危大工程专项施工方案，涉及危险性较大的分部分项工程时不符合《危险性较大的分部分项工程安全管理规定》第十条。请在施工组织设计中补充专项方案。"
+    law_ref: "《危险性较大的分部分项工程安全管理规定》第十条"
+
+  - id: "PROC-001"
+    category: "程序合规"
+    industry: "通用"
+    severity: "medium"
+    source:
+      law: "中华人民共和国招标投标法"
+      article: "第四十四条"
+      version: "2017年修正版"
+      effective_date: "2017-12-28"
+      excerpt: "评标委员会成员应当客观、公正地履行职务，遵守职业道德，对所提出的评审意见承担个人责任。"
+    conditions:
+      document_type: "招标文件"
+      trigger:
+        chapter_keywords: ["评分办法", "评标办法", "评审因素"]
+    patterns:
+      - type: "regex"
+        value: "(评委|评审专家|评标委员会).{0,8}(酌情|自主|自由|见机).{0,6}(打分|评分|评定)"
+        target: "all_clauses"
+        description: "评分办法存在主观酌情打分表述"
+    check: "any_match"
+    suggestion: "评标办法存在'评委酌情打分'等主观性描述，评审依据不透明，违反《招标投标法》第四十四条客观公正评审要求。建议将评分因素量化、明确评分细则。"
+    law_ref: "《中华人民共和国招标投标法》第四十四条"
+
+  - id: "PROC-002"
+    category: "程序合规"
+    industry: "通用"
+    severity: "medium"
+    source:
+      law: "中华人民共和国招标投标法实施条例"
+      article: "第四十九条"
+      version: "2019年修订版"
+      effective_date: "2019-03-02"
+      excerpt: "评标委员会成员的名单在中标结果确定前应当保密。"
+    conditions:
+      document_type: "招标文件"
+      trigger:
+        chapter_keywords: ["评标", "定标", "评标委员会"]
+    patterns:
+      - type: "keyword"
+        value: ["公布评委名单", "提前公示专家名单", "公开评标委员会名单"]
+        target: "all_clauses"
+        operator: "OR"
+        description: "评标委员会名单在中标结果确定前泄露"
+    check: "any_match"
+    suggestion: "评标委员会成员名单在中标结果确定前公开，违反《招标投标法实施条例》第四十九条保密要求。请移除相关公开表述。"
+    law_ref: "《中华人民共和国招标投标法实施条例》第四十九条"
+
+  - id: "AWARD-002"
+    category: "定标合规"
+    industry: "通用"
+    severity: "high"
+    source:
+      law: "中华人民共和国招标投标法实施条例"
+      article: "第七十四条"
+      version: "2019年修订版"
+      effective_date: "2019-03-02"
+      excerpt: "中标人无正当理由不与招标人订立合同的，招标人可以取消其中标资格，其投标保证金不予退还。"
+    conditions:
+      document_type: "招标文件"
+      trigger:
+        chapter_keywords: ["中标", "定标", "保证金"]
+    patterns:
+      - type: "regex"
+        value: "(弃标|放弃中标|拒绝签约).{0,12}(没收|扣罚|不予退还).{0,4}(全部|所有|全额).{0,4}(保证金|押金|担保金)"
+        target: "all_clauses"
+        description: "弃标即没收全部保证金的过度处罚"
+    check: "any_match"
+    suggestion: "对弃标一律没收全部投标保证金，处罚明显过重（《招标投标法实施条例》第七十四条仅规定履约保证金不予退还，投标保证金处理应区分情形）。建议按损失比例约定违约责任。"
+    law_ref: "《中华人民共和国招标投标法实施条例》第七十四条"
+
+  - id: "DEPOSIT-002"
+    category: "保证金"
+    industry: "通用"
+    severity: "high"
+    source:
+      law: "中华人民共和国招标投标法实施条例"
+      article: "第五十八条"
+      version: "2019年修订版"
+      effective_date: "2019-03-02"
+      excerpt: "招标文件要求中标人提交履约保证金的，中标人应当按照招标文件的要求提交。履约保证金不得超过中标合同金额的百分之十。"
+    conditions:
+      document_type: "招标文件"
+      trigger:
+        chapter_keywords: ["履约保证金", "履约担保"]
+    patterns:
+      - type: "field_compare"
+        left: "履约保证金金额"
+        operator: ">"
+        right: "中标金额 * 0.10"
+        unit: "元"
+        target: "front_table"
+        description: "履约保证金超过中标金额 10%"
+    check: "any_match"
+    suggestion: "履约保证金超过中标合同金额的 10%，违反《招标投标法实施条例》第五十八条。建议下调至不超过中标金额的 10%。"
+    law_ref: "《中华人民共和国招标投标法实施条例》第五十八条"
+
+  - id: "BUDGET-002"
+    category: "报价合规"
+    industry: "通用"
+    severity: "medium"
+    source:
+      law: "中华人民共和国招标投标法实施条例"
+      article: "第二十六条"
+      version: "2019年修订版"
+      effective_date: "2019-03-02"
+      excerpt: "招标人在招标文件中要求投标人提交投标保证金的，投标保证金不超过招标项目估算价的 2%。"
+    conditions:
+      document_type: "招标文件"
+      trigger:
+        chapter_keywords: ["投标保证金", "保证金"]
+    patterns:
+      - type: "keyword"
+        value: ["仅限现金", "只接受现金", "现金方式缴纳", "不接受汇款", "不接受保函"]
+        target: "all_clauses"
+        operator: "OR"
+        description: "投标保证金限定现金缴纳方式"
+    check: "any_match"
+    suggestion: "投标保证金仅限现金缴纳，限制了保函、转账等合法缴纳方式，增加投标人负担（应当允许支票、汇票、保函等多种形式）。建议允许非现金方式。"
+    law_ref: "《中华人民共和国招标投标法实施条例》第二十六条"
+
+  - id: "TEAM-002"
+    category: "排斥性条款"
+    industry: "通用"
+    severity: "low"
+    source:
+      law: "中华人民共和国招标投标法实施条例"
+      article: "第三十七条"
+      version: "2019年修订版"
+      effective_date: "2019-03-02"
+      excerpt: "招标人应当在招标文件中载明是否接受联合体投标。"
+    conditions:
+      document_type: "招标文件"
+      trigger:
+        chapter_keywords: ["联合体", "投标人资格"]
+    patterns:
+      - type: "keyword"
+        value: ["不接受联合体投标", "不允许联合体", "联合体投标不予受理"]
+        target: "all_clauses"
+        operator: "OR"
+        description: "明确不接受联合体投标（提示项，是否违法视项目而定）"
+    check: "any_match"
+    suggestion: "本项目明确不接受联合体投标。若项目大、专业多且对单一企业资质要求过高，应评估是否排斥了资格能力不足的中小企业（提示：接受联合体可扩大竞争）。"
+    law_ref: "《中华人民共和国招标投标法实施条例》第三十七条"
