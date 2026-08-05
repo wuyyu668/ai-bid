@@ -83,7 +83,8 @@ fn find_near(text: &str, keyword_pattern: &str, parse: &dyn Fn(&str) -> Option<f
 /// 提取键与 `rules/rules.yml` 中 field_compare 的 `left/right` 对齐：
 ///
 /// - `招标文件发出日期` / `投标截止日期` —— 日期序号（天）
-/// - `投标保证金金额` / `招标项目估算价` / `采购预算金额` / `投标报价总额` —— 元
+/// - `投标保证金金额` / `招标项目估算价` / `采购预算金额` / `投标报价总额`
+///   / `履约保证金金额` / `中标金额` —— 元
 pub fn extract_metrics(clause_texts: &[&str]) -> HashMap<String, f64> {
     let mut metrics = HashMap::new();
     let mut all_text = String::new();
@@ -109,6 +110,8 @@ pub fn extract_metrics(clause_texts: &[&str]) -> HashMap<String, f64> {
         ("招标项目估算价", "估算价"),
         ("采购预算金额", "预算"),
         ("投标报价总额", "投标报价"),
+        ("履约保证金金额", "履约保证金"),
+        ("中标金额", "中标金额"),
     ];
     for (key, keyword) in amount_pairs {
         if let Some(v) = find_near(&all_text, keyword, &|s| parse_amount(s)) {
@@ -154,12 +157,24 @@ mod tests {
             "投标文件递交截止时间为2025年6月22日。",
             "本项目估算价为5000万元，投标保证金为50万元。",
         ];
-        let m = extract_metrics(&texts.iter().map(|s| *s).collect::<Vec<_>>());
+        let m = extract_metrics(&texts);
         let issue = m.get("招标文件发出日期").expect("应提取发出日期");
         let deadline = m.get("投标截止日期").expect("应提取截止日期");
         let gap = deadline - issue;
         assert!((gap - 21.0).abs() < 1e-6, "6月22日 - 6月1日 = 21 天，实际 {gap}");
         assert_eq!(m.get("招标项目估算价"), Some(&50_000_000.0));
         assert_eq!(m.get("投标保证金金额"), Some(&500_000.0));
+    }
+
+    #[test]
+    fn extract_metrics_for_day2_rules() {
+        // DEPOSIT-002 履约保证金 与 中标金额（Day 2 新增 field_compare 所需）
+        let texts = [
+            "本项目履约保证金为80万元。",
+            "中标金额为500万元。",
+        ];
+        let m = extract_metrics(&texts);
+        assert_eq!(m.get("履约保证金金额"), Some(&800_000.0));
+        assert_eq!(m.get("中标金额"), Some(&5_000_000.0));
     }
 }

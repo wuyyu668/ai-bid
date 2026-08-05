@@ -2112,3 +2112,118 @@ pub async fn delete_metric_run(
         ),
     }
 }
+
+// ─── 规则库端点（Day 2）────────────────────────────────────────────────
+
+/// POST /api/v1/rules/validate — 对 `rules/rules.yml` 全库跑 RuleValidator 5 项静态校验。
+///
+/// 返回规则总数、通过数、通过率与问题明细。通过率 > 80% 视为达标。
+#[utoipa::path(
+    post,
+    path = "/api/v1/rules/validate",
+    tag = "rules",
+    responses(
+        (status = 200, description = "校验报告（total / passed / pass_rate / issues）"),
+    )
+)]
+pub async fn validate_rules() -> (StatusCode, Json<serde_json::Value>) {
+    let rules_path = data_path_str("rules/rules.yml");
+    match crate::rules::load_rules_from_file(&rules_path) {
+        Ok(rules) => {
+            let report = crate::rules::validator::RuleValidator::validate_all(&rules);
+            let issues: Vec<serde_json::Value> = report
+                .issues
+                .iter()
+                .map(|i| serde_json::json!({"rule_id": i.rule_id, "field": i.field, "message": i.message}))
+                .collect();
+            (
+                StatusCode::OK,
+                Json(serde_json::json!({
+                    "total": report.total,
+                    "passed": report.passed,
+                    "pass_rate": report.pass_rate(),
+                    "threshold": 0.8,
+                    "issues": issues,
+                })),
+            )
+        }
+        Err(e) => {
+            let detail = format!("加载规则库失败: {}", e);
+            eprintln!("[ERROR] {}", detail);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": "加载规则库失败", "detail": detail})),
+            )
+        }
+    }
+}
+
+/// POST /api/v1/rules/generate — LLM 生成规则草稿（校验通过后写入 rules/_drafts/）。
+#[utoipa::path(
+    post,
+    path = "/api/v1/rules/generate",
+    tag = "rules",
+    request_body = GenerateRuleRequest,
+    responses(
+        (status = 200, description = "规则草稿（含静态校验结果与草稿路径）"),
+        (status = 500, description = "LLM 调用或草稿落盘失败"),
+    )
+)]
+pub async fn generate_rule(
+    Json(req): Json<GenerateRuleRequest>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let llm = match create_llm_client() {
+        Ok(c) => c,
+        Err(e) => {
+            let detail = format!("创建 LLM 客户端失败: {}", e);
+            eprintln!("[ERROR] {}", detail);
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": "创建 LLM 客户端失败", "detail": detail})),
+            );
+        }
+    };
+    let tool = crate::agents::tools::generate_rule::GenerateRuleTool::new(
+        std::sync::Arc::from(llm),
+        "rules/_drafts",
+    );
+    let args = crate::agents::tools::generate_rule::GenerateRuleArgs {
+        topic: req.topic,
+        law: req.law,
+        article: req.article,
+    };
+    match tool.generate(&args).await {
+        Ok(result) => (
+            StatusCode::OK,
+            Json(serde_json::json!({
+                "rule_id": result.rule_id,
+                "passed": result.passed,
+                "pass_rate": result.pass_rate,
+                "issues": result.issues,
+                "draft_path": result.draft_path,
+                "yaml": result.yaml,
+            })),
+        ),
+        Err(e) => {
+            let detail = format!("规则草稿生成失败: {}", e);
+            eprintln!("[ERROR] {}", detail);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": "规则草稿生成失败", "detail": detail})),
+            )
+        }
+    }
+}
+
+/// 规则生成请求 DTO。
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct GenerateRuleRequest {
+    /// 条款样本/主题（必填）
+    pub topic: String,
+    /// 法律依据名称（可选）
+    #[serde(default)]
+    pub law: Option<String>,
+    /// 法律条款编号（可选，如 "第二十六条"）
+    #[serde(default)]
+    pub article: Option<String>,
+}

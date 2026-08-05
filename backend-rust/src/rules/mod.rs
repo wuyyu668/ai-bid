@@ -4,7 +4,7 @@
 //! regex / keyword / field_compare 三合一匹配，输出 `RuleMatch[]`，
 //! 并生成 Agent System Prompt 上下文（`build_agent_context`）。
 //!
-//! 模块结构（对应 `docs/规则匹配模块开发排期说明.md` Day 1）：
+//! 模块结构（对应 `docs/规则匹配模块开发排期.md` Day 1）：
 //!
 //! - [`schema`]：六要素规则模型 + 文档模型（YAML 反序列化）
 //! - [`engine`]：三合一匹配器 + 预编译正则 + 容错加载
@@ -19,8 +19,10 @@ pub mod context;
 pub mod engine;
 pub mod metrics;
 pub mod schema;
+pub mod validator;
 
 pub use context::build_agent_context;
 pub use engine::{EngineError, RuleEngine, load_rules_from_file, load_rules_from_str};
 pub use metrics::extract_metrics;
 pub use schema::{ParsedDocument, RuleMatch};
+pub use validator::RuleValidator;

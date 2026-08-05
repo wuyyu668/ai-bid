@@ -37,6 +37,7 @@ pub mod calculate_timeline;
 pub mod check_cross_reference;
 pub mod compare_with_template;
 pub mod extract_obligations;
+pub mod generate_rule;
 pub mod output_finding;
 pub mod output_verification_batch;
 pub mod read_section;

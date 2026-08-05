@@ -1,5 +1,6 @@
 //! 规则匹配引擎 —— 三合一匹配器（regex / keyword / field_compare）
-
+//!
+//! 移植自 `参考资料/规则匹配实战/lesson-02/matcher-demo/src/lib.rs`（生产级实现，不要重写），
 //! 设计要点：
 //!
 //! - **regex**：预编译缓存，YAML 里 `\uXXXX` 自动转 `\x{XXXX}`（`normalize_regex`）；
@@ -139,7 +140,7 @@ static UNICODE_ESCAPE_RE: LazyLock<Regex> = LazyLock::new(|| {
 
 /// Rust regex 使用 `\x{XXXX}` 表示 Unicode 码点，而 YAML 里写的是 PCRE 风格 `\uXXXX`。
 /// 做一次兼容转换，让 BRAND-001 等含中文码点区间的正则也能编译。
-fn normalize_regex(pat: &str) -> String {
+pub(crate) fn normalize_regex(pat: &str) -> String {
     UNICODE_ESCAPE_RE.replace_all(pat, r"\x{$1}").into_owned()
 }
 
